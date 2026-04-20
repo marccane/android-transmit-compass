@@ -19,15 +19,17 @@ import androidx.appcompat.app.AppCompatActivity;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends AppCompatActivity implements SensorEventListener {
 
-    private static final int MODE_NONE       = 0;
-    private static final int MODE_ROT_VEC   = 1; // fused (needs gyro)
-    private static final int MODE_GEO_VEC   = 2; // geomagnetic rotation vector (no gyro needed)
-    private static final int MODE_ACCEL_MAG = 3; // raw accel + magnetometer fallback
+    private static final int MODE_NONE        = 0;
+    private static final int MODE_ROT_VEC    = 1; // fused rotation vector (needs gyro)
+    private static final int MODE_GEO_VEC    = 2; // geomagnetic rotation vector (no gyro)
+    private static final int MODE_ORIENTATION = 3; // deprecated TYPE_ORIENTATION, direct azimuth
+    private static final int MODE_ACCEL_MAG  = 4; // raw accel + magnetometer
 
     private SensorManager sensorManager;
     private Sensor rotationSensor;    // TYPE_ROTATION_VECTOR or TYPE_GEOMAGNETIC_ROTATION_VECTOR
@@ -107,8 +109,9 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         setupSensors();
     }
 
+    @SuppressWarnings("deprecation")
     private void setupSensors() {
-        // 1. Best: fused rotation vector (requires gyroscope)
+        // 1. Fused rotation vector (needs gyroscope)
         rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
         if (rotationSensor != null) {
             sensorMode = MODE_ROT_VEC;
@@ -116,7 +119,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             return;
         }
 
-        // 2. Good: geomagnetic rotation vector (no gyroscope needed — J5 2016 path)
+        // 2. Geomagnetic rotation vector (no gyroscope needed)
         rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR);
         if (rotationSensor != null) {
             sensorMode = MODE_GEO_VEC;
@@ -124,7 +127,15 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             return;
         }
 
-        // 3. Fallback: raw accelerometer + magnetometer
+        // 3. Deprecated TYPE_ORIENTATION — gives azimuth directly, works on any real compass chip
+        rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ORIENTATION);
+        if (rotationSensor != null) {
+            sensorMode = MODE_ORIENTATION;
+            statusText.setText("Sensor: orientation");
+            return;
+        }
+
+        // 4. Raw accelerometer + magnetometer
         accelSensor  = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
         magnetSensor = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
         if (accelSensor != null && magnetSensor != null) {
@@ -133,10 +144,14 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             return;
         }
 
-        // Nothing worked
+        // Nothing matched — list all available sensors for debugging
         sensorMode = MODE_NONE;
-        Toast.makeText(this, "No compass sensor found on this device", Toast.LENGTH_LONG).show();
-        statusText.setText("No sensor available");
+        List<Sensor> all = sensorManager.getSensorList(Sensor.TYPE_ALL);
+        StringBuilder sb = new StringBuilder("No compass sensor. Available (").append(all.size()).append("):");
+        for (Sensor s : all) {
+            sb.append("\n  type=").append(s.getType()).append(" ").append(s.getName());
+        }
+        statusText.setText(sb.toString());
     }
 
     private void toggleSending() {
@@ -175,6 +190,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         switch (sensorMode) {
             case MODE_ROT_VEC:
             case MODE_GEO_VEC:
+            case MODE_ORIENTATION:
                 sensorManager.registerListener(this, rotationSensor,
                         SensorManager.SENSOR_DELAY_UI);
                 break;
@@ -215,6 +231,10 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 azimuth = (float) Math.toDegrees(orientation[0]);
                 break;
             }
+            case Sensor.TYPE_ORIENTATION:
+                // values[0] is already azimuth in degrees [0, 360)
+                azimuth = event.values[0];
+                break;
             case Sensor.TYPE_ACCELEROMETER:
                 System.arraycopy(event.values, 0, gravity, 0, 3);
                 hasGravity = true;
