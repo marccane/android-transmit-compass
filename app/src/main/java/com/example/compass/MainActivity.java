@@ -24,10 +24,16 @@ import java.util.concurrent.Executors;
 
 public class MainActivity extends AppCompatActivity implements SensorEventListener {
 
+    private static final int MODE_NONE       = 0;
+    private static final int MODE_ROT_VEC   = 1; // fused (needs gyro)
+    private static final int MODE_GEO_VEC   = 2; // geomagnetic rotation vector (no gyro needed)
+    private static final int MODE_ACCEL_MAG = 3; // raw accel + magnetometer fallback
+
     private SensorManager sensorManager;
-    private Sensor rotationSensor;
+    private Sensor rotationSensor;    // TYPE_ROTATION_VECTOR or TYPE_GEOMAGNETIC_ROTATION_VECTOR
     private Sensor accelSensor;
     private Sensor magnetSensor;
+    private int sensorMode = MODE_NONE;
 
     private CompassView compassView;
     private TextView statusText;
@@ -35,12 +41,11 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private EditText portEditText;
     private Button sendToggleButton;
 
-    // Sensor data
-    private float[] gravity = new float[3];
-    private float[] geomagnetic = new float[3];
+    // Sensor data for accel+mag fallback
+    private final float[] gravity = new float[3];
+    private final float[] geomagnetic = new float[3];
     private boolean hasGravity = false;
     private boolean hasGeomagnetic = false;
-    private boolean useRotationVector = false;
 
     // Smoothed azimuth
     private float smoothedAzimuth = 0f;
@@ -103,18 +108,35 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     }
 
     private void setupSensors() {
-        // Prefer TYPE_ROTATION_VECTOR (fused, more stable)
+        // 1. Best: fused rotation vector (requires gyroscope)
         rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
         if (rotationSensor != null) {
-            useRotationVector = true;
-        } else {
-            // Fallback: accelerometer + magnetometer
-            accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
-            magnetSensor = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
-            if (accelSensor == null || magnetSensor == null) {
-                Toast.makeText(this, "Compass sensor not available", Toast.LENGTH_LONG).show();
-            }
+            sensorMode = MODE_ROT_VEC;
+            statusText.setText("Sensor: rotation vector");
+            return;
         }
+
+        // 2. Good: geomagnetic rotation vector (no gyroscope needed — J5 2016 path)
+        rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR);
+        if (rotationSensor != null) {
+            sensorMode = MODE_GEO_VEC;
+            statusText.setText("Sensor: geomagnetic vector");
+            return;
+        }
+
+        // 3. Fallback: raw accelerometer + magnetometer
+        accelSensor  = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+        magnetSensor = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
+        if (accelSensor != null && magnetSensor != null) {
+            sensorMode = MODE_ACCEL_MAG;
+            statusText.setText("Sensor: accel+mag");
+            return;
+        }
+
+        // Nothing worked
+        sensorMode = MODE_NONE;
+        Toast.makeText(this, "No compass sensor found on this device", Toast.LENGTH_LONG).show();
+        statusText.setText("No sensor available");
     }
 
     private void toggleSending() {
@@ -150,16 +172,18 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     @Override
     protected void onResume() {
         super.onResume();
-        if (useRotationVector && rotationSensor != null) {
-            sensorManager.registerListener(this, rotationSensor,
-                    SensorManager.SENSOR_DELAY_UI);
-        } else {
-            if (accelSensor != null)
+        switch (sensorMode) {
+            case MODE_ROT_VEC:
+            case MODE_GEO_VEC:
+                sensorManager.registerListener(this, rotationSensor,
+                        SensorManager.SENSOR_DELAY_UI);
+                break;
+            case MODE_ACCEL_MAG:
                 sensorManager.registerListener(this, accelSensor,
                         SensorManager.SENSOR_DELAY_UI);
-            if (magnetSensor != null)
                 sensorManager.registerListener(this, magnetSensor,
                         SensorManager.SENSOR_DELAY_UI);
+                break;
         }
     }
 
@@ -179,38 +203,39 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     @Override
     public void onSensorChanged(SensorEvent event) {
-        float azimuth = -1f;
+        float azimuth = Float.NaN;
 
-        if (event.sensor.getType() == Sensor.TYPE_ROTATION_VECTOR) {
-            float[] rotMatrix = new float[9];
-            float[] orientation = new float[3];
-            SensorManager.getRotationMatrixFromVector(rotMatrix, event.values);
-            SensorManager.getOrientation(rotMatrix, orientation);
-            azimuth = (float) Math.toDegrees(orientation[0]);
-
-        } else if (event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
-            System.arraycopy(event.values, 0, gravity, 0, 3);
-            hasGravity = true;
-
-        } else if (event.sensor.getType() == Sensor.TYPE_MAGNETIC_FIELD) {
-            System.arraycopy(event.values, 0, geomagnetic, 0, 3);
-            hasGeomagnetic = true;
+        switch (event.sensor.getType()) {
+            case Sensor.TYPE_ROTATION_VECTOR:
+            case Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR: {
+                float[] rotMatrix = new float[9];
+                float[] orientation = new float[3];
+                SensorManager.getRotationMatrixFromVector(rotMatrix, event.values);
+                SensorManager.getOrientation(rotMatrix, orientation);
+                azimuth = (float) Math.toDegrees(orientation[0]);
+                break;
+            }
+            case Sensor.TYPE_ACCELEROMETER:
+                System.arraycopy(event.values, 0, gravity, 0, 3);
+                hasGravity = true;
+                break;
+            case Sensor.TYPE_MAGNETIC_FIELD:
+                System.arraycopy(event.values, 0, geomagnetic, 0, 3);
+                hasGeomagnetic = true;
+                break;
         }
 
-        if (!useRotationVector && hasGravity && hasGeomagnetic) {
+        if (Float.isNaN(azimuth) && hasGravity && hasGeomagnetic) {
             float[] rotMatrix = new float[9];
             float[] incMatrix = new float[9];
-            boolean success = SensorManager.getRotationMatrix(
-                    rotMatrix, incMatrix, gravity, geomagnetic);
-            if (success) {
+            if (SensorManager.getRotationMatrix(rotMatrix, incMatrix, gravity, geomagnetic)) {
                 float[] orientation = new float[3];
                 SensorManager.getOrientation(rotMatrix, orientation);
                 azimuth = (float) Math.toDegrees(orientation[0]);
             }
         }
 
-        if (azimuth < 0f && azimuth != -1f) azimuth += 360f;
-        if (azimuth < 0f) return; // no valid reading yet
+        if (Float.isNaN(azimuth)) return;
 
         // Normalize to [0, 360)
         azimuth = ((azimuth % 360f) + 360f) % 360f;
