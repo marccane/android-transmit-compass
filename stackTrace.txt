@@ -1,0 +1,3 @@
+#Ha d'estar l'app oberta al mobil!!!
+adb logcat -b all -v color --pid=`adb shell pidof -s com.example.compass.debug`
+com.example.compass.debug

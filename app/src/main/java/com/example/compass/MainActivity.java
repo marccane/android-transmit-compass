@@ -177,7 +177,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             DatagramPacket packet = new DatagramPacket(data, data.length, address, port);
             socket.send(packet);
             runOnUiThread(() -> statusText.setText(
-                    getString(R.string.sent_to, ip, port, azimuth)));
+                    getString(R.string.sent_to, azimuth, ip, port)));
         } catch (Exception e) {
             runOnUiThread(() -> statusText.setText(
                     getString(R.string.send_error, e.getMessage())));
