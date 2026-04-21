@@ -58,7 +58,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private boolean isSending = false;
     private final Handler sendHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
-    private static final int SEND_INTERVAL_MS = 100; // 10 Hz
+    private static final int SEND_INTERVAL_MS = 500; // 2 Hz
 
     private final Runnable sendRunnable = new Runnable() {
         @Override
