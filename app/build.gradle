@@ -12,6 +12,9 @@ android {
         targetSdk 34
         versionCode 1
         versionName "1.0"
+
+        def transmitIp = System.getenv("COMPASS_APP_TRANSMIT_IP") ?: ""
+        resValue "string", "default_transmit_ip", transmitIp
     }
 
     buildTypes {
