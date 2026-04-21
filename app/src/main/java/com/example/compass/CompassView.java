@@ -116,9 +116,9 @@ public class CompassView extends View {
         northPaint.setTextSize(cardinalSize);
 
         for (int deg = 0; deg < 360; deg += 5) {
-            float angleRad = (float) Math.toRadians(deg - 90); // -90 so 0 is at top
+            float angleRad = (float) Math.toRadians(deg);
             float sin = (float) Math.sin(angleRad);
-            float cos = (float) Math.cos(angleRad);
+            float cos = -(float) Math.cos(angleRad);
 
             float outerR = radius - 5f;
             float innerR;
