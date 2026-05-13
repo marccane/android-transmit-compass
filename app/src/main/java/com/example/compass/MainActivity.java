@@ -9,6 +9,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.WindowManager;
+import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
@@ -19,6 +20,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.net.SocketTimeoutException;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -39,9 +41,13 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     private CompassView compassView;
     private TextView statusText;
+    private View ackDot;
     private EditText ipEditText;
     private EditText portEditText;
     private Button sendToggleButton;
+
+    private volatile DatagramSocket persistentSocket = null;
+    private static final int ACK_TIMEOUT_MS = 350;
 
     // Sensor data for accel+mag fallback
     private final float[] gravity = new float[3];
@@ -99,6 +105,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         compassView = findViewById(R.id.compassView);
         statusText = findViewById(R.id.statusText);
+        ackDot = findViewById(R.id.ackDot);
         ipEditText = findViewById(R.id.ipEditText);
         portEditText = findViewById(R.id.portEditText);
         sendToggleButton = findViewById(R.id.sendToggleButton);
@@ -107,6 +114,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         setupSensors();
+        if (sensorMode != MODE_NONE) statusText.setText(R.string.idle);
     }
 
     @SuppressWarnings("deprecation")
@@ -157,30 +165,68 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private void toggleSending() {
         isSending = !isSending;
         if (isSending) {
+            try {
+                persistentSocket = new DatagramSocket();
+                persistentSocket.setSoTimeout(ACK_TIMEOUT_MS);
+            } catch (Exception e) {
+                statusText.setText(getString(R.string.send_error, e.getMessage()));
+                isSending = false;
+                return;
+            }
             sendToggleButton.setText(R.string.stop_sending);
             sendToggleButton.setBackgroundColor(getResources().getColor(R.color.stop_color));
+            setAckDot(AckState.IDLE);
             sendHandler.post(sendRunnable);
             statusText.setText(R.string.sending);
         } else {
+            DatagramSocket s = persistentSocket;
+            persistentSocket = null;
+            if (s != null) s.close();
             sendToggleButton.setText(R.string.start_sending);
             sendToggleButton.setBackgroundColor(getResources().getColor(R.color.start_color));
+            setAckDot(AckState.IDLE);
             statusText.setText(R.string.idle);
         }
     }
 
+    private enum AckState { IDLE, OK, FAIL }
+
+    private void setAckDot(AckState state) {
+        switch (state) {
+            case OK:   ackDot.setBackgroundResource(R.drawable.dot_green); break;
+            case FAIL: ackDot.setBackgroundResource(R.drawable.dot_red);   break;
+            default:   ackDot.setBackgroundResource(R.drawable.dot_gray);  break;
+        }
+    }
+
     private void sendUdp(String ip, int port, float azimuth) {
-        try (DatagramSocket socket = new DatagramSocket()) {
-            socket.setSoTimeout(500);
-            String message = String.format("%.2f\n", azimuth);
-            byte[] data = message.getBytes("UTF-8");
-            InetAddress address = InetAddress.getByName(ip);
-            DatagramPacket packet = new DatagramPacket(data, data.length, address, port);
+        DatagramSocket socket = persistentSocket;
+        if (socket == null || socket.isClosed()) return;
+        try {
+            byte[] data = String.format("%.2f\n", azimuth).getBytes("UTF-8");
+            DatagramPacket packet = new DatagramPacket(
+                    data, data.length, InetAddress.getByName(ip), port);
             socket.send(packet);
-            runOnUiThread(() -> statusText.setText(
-                    getString(R.string.sent_to, azimuth, ip, port)));
+
+            // Wait for any reply from the server as an ACK
+            try {
+                DatagramPacket reply = new DatagramPacket(new byte[64], 64);
+                socket.receive(reply); // blocks up to ACK_TIMEOUT_MS
+                runOnUiThread(() -> {
+                    setAckDot(AckState.OK);
+                    statusText.setText(getString(R.string.sent_to, azimuth, ip, port));
+                });
+            } catch (SocketTimeoutException e) {
+                runOnUiThread(() -> {
+                    setAckDot(AckState.FAIL);
+                    statusText.setText(getString(R.string.sent_to, azimuth, ip, port) + " (no ACK)");
+                });
+            }
         } catch (Exception e) {
-            runOnUiThread(() -> statusText.setText(
-                    getString(R.string.send_error, e.getMessage())));
+            runOnUiThread(() -> {
+                setAckDot(AckState.FAIL);
+                statusText.setText(getString(R.string.send_error, e.getMessage()));
+            });
         }
     }
 

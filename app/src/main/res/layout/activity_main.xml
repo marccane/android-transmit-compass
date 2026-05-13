@@ -95,18 +95,34 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Status text -->
-    <TextView
-        android:id="@+id/statusText"
+    <!-- Status row: ACK dot + text -->
+    <LinearLayout
+        android:id="@+id/statusRow"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="@string/idle"
-        android:textColor="#7788AA"
-        android:textSize="13sp"
+        android:orientation="horizontal"
         android:gravity="center"
+        android:layout_marginTop="8dp"
         app:layout_constraintTop_toBottomOf="@id/sendToggleButton"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <View
+            android:id="@+id/ackDot"
+            android:layout_width="12dp"
+            android:layout_height="12dp"
+            android:layout_marginEnd="6dp"
+            android:layout_gravity="center_vertical"
+            android:background="@drawable/dot_gray" />
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/idle"
+            android:textColor="#7788AA"
+            android:textSize="13sp" />
+
+    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
