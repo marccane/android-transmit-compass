@@ -112,6 +112,9 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         sendToggleButton.setOnClickListener(v -> toggleSending());
 
+        TextView versionText = findViewById(R.id.versionText);
+        versionText.setText("v" + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")");
+
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         setupSensors();
         if (sensorMode != MODE_NONE) statusText.setText(R.string.idle);
@@ -203,7 +206,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         DatagramSocket socket = persistentSocket;
         if (socket == null || socket.isClosed()) return;
         try {
-            byte[] data = String.format("%.2f\n", azimuth).getBytes("UTF-8");
+            byte[] data = String.format(java.util.Locale.US, "%.2f\n", azimuth).getBytes("UTF-8");
             DatagramPacket packet = new DatagramPacket(
                     data, data.length, InetAddress.getByName(ip), port);
             socket.send(packet);
