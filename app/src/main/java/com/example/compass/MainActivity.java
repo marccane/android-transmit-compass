@@ -47,6 +47,8 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private Button sendToggleButton;
 
     private volatile DatagramSocket persistentSocket = null;
+    private Thread ackThread = null;
+    // How long the ACK receiver waits before flagging "no ACK" (also its poll interval).
     private static final int ACK_TIMEOUT_MS = 350;
 
     // Sensor data for accel+mag fallback
@@ -64,7 +66,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private boolean isSending = false;
     private final Handler sendHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
-    private static final int SEND_INTERVAL_MS = 500; // 2 Hz
+    private static final int SEND_INTERVAL_MS = 100; // 10 Hz
 
     private final Runnable sendRunnable = new Runnable() {
         @Override
@@ -179,6 +181,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             sendToggleButton.setText(R.string.stop_sending);
             sendToggleButton.setBackgroundColor(getResources().getColor(R.color.stop_color));
             setAckDot(AckState.IDLE);
+            startAckReceiver();
             sendHandler.post(sendRunnable);
             statusText.setText(R.string.sending);
         } else {
@@ -202,6 +205,8 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         }
     }
 
+    // Fire-and-forget: send one packet. ACKs are handled separately by the
+    // receiver thread so a slow/absent ACK never throttles the send rate.
     private void sendUdp(String ip, int port, float azimuth) {
         DatagramSocket socket = persistentSocket;
         if (socket == null || socket.isClosed()) return;
@@ -210,27 +215,35 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             DatagramPacket packet = new DatagramPacket(
                     data, data.length, InetAddress.getByName(ip), port);
             socket.send(packet);
-
-            // Wait for any reply from the server as an ACK
-            try {
-                DatagramPacket reply = new DatagramPacket(new byte[64], 64);
-                socket.receive(reply); // blocks up to ACK_TIMEOUT_MS
-                runOnUiThread(() -> {
-                    setAckDot(AckState.OK);
-                    statusText.setText(getString(R.string.sent_to, azimuth, ip, port));
-                });
-            } catch (SocketTimeoutException e) {
-                runOnUiThread(() -> {
-                    setAckDot(AckState.FAIL);
-                    statusText.setText(getString(R.string.sent_to, azimuth, ip, port) + " (no ACK)");
-                });
-            }
+            runOnUiThread(() ->
+                    statusText.setText(getString(R.string.sent_to, azimuth, ip, port)));
         } catch (Exception e) {
             runOnUiThread(() -> {
                 setAckDot(AckState.FAIL);
                 statusText.setText(getString(R.string.send_error, e.getMessage()));
             });
         }
+    }
+
+    // Continuously listens for server ACKs on its own thread. Green while ACKs
+    // keep arriving, red if none show up within ACK_TIMEOUT_MS.
+    private void startAckReceiver() {
+        ackThread = new Thread(() -> {
+            byte[] buf = new byte[64];
+            while (isSending) {
+                DatagramSocket socket = persistentSocket;
+                if (socket == null || socket.isClosed()) break;
+                try {
+                    socket.receive(new DatagramPacket(buf, buf.length));
+                    runOnUiThread(() -> setAckDot(AckState.OK));
+                } catch (SocketTimeoutException e) {
+                    runOnUiThread(() -> setAckDot(AckState.FAIL));
+                } catch (Exception e) {
+                    break; // socket closed on stop
+                }
+            }
+        }, "ack-receiver");
+        ackThread.start();
     }
 
     @Override
@@ -241,13 +254,13 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             case MODE_GEO_VEC:
             case MODE_ORIENTATION:
                 sensorManager.registerListener(this, rotationSensor,
-                        SensorManager.SENSOR_DELAY_UI);
+                        SensorManager.SENSOR_DELAY_GAME);
                 break;
             case MODE_ACCEL_MAG:
                 sensorManager.registerListener(this, accelSensor,
-                        SensorManager.SENSOR_DELAY_UI);
+                        SensorManager.SENSOR_DELAY_GAME);
                 sensorManager.registerListener(this, magnetSensor,
-                        SensorManager.SENSOR_DELAY_UI);
+                        SensorManager.SENSOR_DELAY_GAME);
                 break;
         }
     }
